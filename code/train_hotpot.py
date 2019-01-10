@@ -25,7 +25,7 @@ def warmup_linear(x, warmup=0.002):
         return x/warmup
     return 1.0 - x
 
-options = options.SquadOptions()
+options = options.HotpotOptions()
 
 torch.cuda.set_device(options.gpu)
 device = torch.device('cuda:{}'.format(options.gpu))
@@ -47,7 +47,7 @@ print(model)
 print("===============================")
 
 
-criterion = nn.CrossEntropyLoss()
+criterion = nn.BCEWithLogitsLoss()
 # opt = BertAdam(model.parameters(), lr=options.lr,  weight_decay=options.weight_decay)
 
 
@@ -77,12 +77,12 @@ optimizer = BertAdam(optimizer_grouped_parameters,
 
 iterations = 0
 start = time.time()
-best_dev_exact_match = -1
+best_dev_f1 = -1
 
 
-routine_log_template = 'Time:{:.4f}, Epoch:{}/{}, Iteration:{}, Avg_train_loss:{:.4f}, batch_loss:{:.4f}, Train_EM:{:.4f}'
+routine_log_template = 'Time:{:.4f}, Epoch:{}/{}, Iteration:{}, Avg_train_loss:{:.4f}, batch_loss:{:.4f}, batch_EM:{:.2f}, batch_F1:{:.2f}'
 
-dev_log_template = 'Dev set - Exact match:{}'
+dev_log_template = 'Dev set - Exact match:{:.2f}, F1:{:.2f}'
 
 
 
@@ -118,7 +118,7 @@ for epoch in range(options.epochs):
         
         answer = model(batch)
         
-        gt_labels = batch["supporting_fact"].int().argmax(dim=1)
+        gt_labels = batch["supporting_fact"]#.int()
         
         loss = criterion(answer, gt_labels) 
         
@@ -142,18 +142,21 @@ for epoch in range(options.epochs):
         
         
         if iterations % options.log_every == 0:
-            answer_copy = answer
-            train_exact_match = accuracy_score(gt_labels.cpu().numpy(), answer_copy.detach().cpu().numpy().argmax(axis=1))
+            thresholded_answer = torch.sigmoid(answer) > options.decision_threshold
+            
+            train_exact_match = accuracy_score(gt_labels.cpu().numpy(), thresholded_answer.detach().cpu().numpy())
+            
+            train_f1 = f1_score(gt_labels.cpu().numpy(), thresholded_answer.detach().cpu().numpy(),average='micro')
             
             avg_loss = total_loss_since_last_time/options.log_every
             total_loss_since_last_time = 0
             
-            print(routine_log_template.format(time.time()-start, epoch+1, options.epochs, iterations,avg_loss, loss.item(), train_exact_match))
+            print(routine_log_template.format(time.time()-start, epoch+1, options.epochs, iterations,avg_loss, loss.item(), train_exact_match, train_f1))
         
         
             if iterations % options.save_every == 0:
                 snapshot_prefix = os.path.join(options.save_path, 'snapshot')
-                snapshot_path = snapshot_prefix + '_EM_{:.4f}_loss_{:.6f}_iter_{}_model.pt'.format(train_exact_match, loss.item(), iterations)
+                snapshot_path = snapshot_prefix + '_f1_{:.4f}_loss_{:.4f}_iter_{}_model.pt'.format(train_f1, loss.item(), iterations)
                 torch.save(model, snapshot_path)
                 for f in glob.glob(snapshot_prefix + '*'):
                     if f != snapshot_path:
@@ -166,7 +169,7 @@ for epoch in range(options.epochs):
     dev_minibatch_index_generator = utils.minibatch_indices_generator(dev_data_len, options.batch_size, shuffle=False)
 
     # switch model to evaluation mode
-    model.eval();
+    model.eval()
 
     answers_for_whole_dev_set = []
     total_dev_loss = 0
@@ -175,21 +178,23 @@ for epoch in range(options.epochs):
             dev_batch = dev_minibatch_from_indices.get(dev_minibatch_indices)
             dev_answer = model(dev_batch)
             answers_for_whole_dev_set.append(dev_answer.cpu().numpy())
-            dev_gt_labels = dev_batch["supporting_fact"].int().argmax(dim=1)
+            dev_gt_labels = dev_batch["supporting_fact"]#.int()
             dev_loss = criterion(dev_answer, dev_gt_labels)
             total_dev_loss += dev_loss.item()
 
     answers_for_whole_dev_set = np.concatenate(answers_for_whole_dev_set, axis = 0)
 
-    dev_answer_labels = answers_for_whole_dev_set.argmax(axis=1)
+    dev_answer_labels = thresholded_answer = torch.sigmoid(answers_for_whole_dev_set) > options.decision_threshold 
     
-    dev_exact_match = accuracy_score(np.array(dev_data["supporting_fact"]).argmax(axis = 1), dev_answer_labels)
+    dev_exact_match = accuracy_score(np.array(dev_data["supporting_fact"]), dev_answer_labels)
+    
+    dev_f1 = f1_score(np.array(dev_data["supporting_fact"]), dev_answer_labels, average='micro')
 
-    print(dev_log_template.format(dev_exact_match))
+    print(dev_log_template.format(dev_exact_match,dev_f1))
 
 
     # update best valiation set accuracy
-    if dev_exact_match > best_dev_exact_match:
+    if dev_f1 > best_dev_f1:
         
         dev_predictions_best_model = answers_for_whole_dev_set
         
@@ -197,9 +202,9 @@ for epoch in range(options.epochs):
         
         # found a model with better validation set accuracy
 
-        best_dev_exact_match = dev_exact_match
+        best_dev_f1 = dev_f1
         snapshot_prefix = os.path.join(options.save_path, 'best_snapshot')
-        snapshot_path = snapshot_prefix + '_dev_EM_{}_iter_{}_model.pt'.format(dev_exact_match, iterations)
+        snapshot_path = snapshot_prefix + '_dev_f1_{}_iter_{}_model.pt'.format(dev_f1, iterations)
 
         # save model, delete previous 'best_snapshot' files
         torch.save(model.state_dict(), snapshot_path)
@@ -211,7 +216,7 @@ for epoch in range(options.epochs):
     
     if(num_epochs_since_last_best_dev_acc > options.early_stopping_patience):
         print("Training stopped because dev acc hasn't increased in {} epochs.".format(options.early_stopping_patience))
-        print("Best dev set accuracy = {}".format(best_dev_exact_match))
+        print("Best dev set accuracy = {}".format(best_dev_f1))
         break
 
         
@@ -219,3 +224,4 @@ for epoch in range(options.epochs):
 # save best predictions
 if(dev_predictions_best_model is not None):
     utils.pickler(options.save_path, options.predictions_pkl_name, dev_predictions_best_model)
+
