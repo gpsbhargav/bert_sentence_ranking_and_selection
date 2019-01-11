@@ -43,7 +43,9 @@ class HotpotOptions:
         # ----Training----
         self.epochs = 2
         self.batch_size = 128
+        self.dev_batch_size = 1024
         self.log_every = 100
+        self.evaluate_every = 1000
         self.save_every = self.log_every * 500
         self.early_stopping_patience = 4
         self.gradient_accumulation_steps = 1  # only 1 is supported
@@ -57,11 +59,11 @@ class HotpotOptions:
         
         # ----Data location, other paths----
         self.data_pkl_path = "../data/hotpot/"
-        self.train_pkl_name = "preprocessed_train.pkl"
+        self.train_pkl_name = "preprocessed_train_balanced.pkl"
         self.dev_pkl_name = "preprocessed_dev.pkl"
         self.save_path = "../saved_models/hotpot/"
         self.predictions_pkl_name = "predictions.pkl"
-        self.bert_archive = "/local_scratch/csagps/bert_archive/"
+        self.bert_archive = "../../bert_archive/"
         
         # ----Network hyperparameters----
         self.bert_type = 'bert-base-uncased' # one of bert-base-uncased or bert-large-uncased

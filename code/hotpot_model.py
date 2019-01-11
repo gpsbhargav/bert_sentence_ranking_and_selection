@@ -14,7 +14,7 @@ class SentenceSelector(nn.Module):
         self.options = options
         self.device = device
         self.bert = BertModel.from_pretrained(options.bert_type, cache_dir=options.bert_archive)
-        self.query_for_sentence_ranking = nn.Parameter(torch.randn(1, 1, options.bert_hidden_size, requires_grad=True))
+        self.query_for_sentence_ranking = nn.Parameter(torch.randn(1, options.bert_hidden_size, requires_grad=True))
         
     
     def construct_binary_mask(self, tensor_in, padding_index = 0):
@@ -36,8 +36,8 @@ class SentenceSelector(nn.Module):
         
         paragraph_rep = pooled_representation
         
-        paragraph_rep = self.options.dropout(paragraph_rep)
+        # paragraph_rep = self.options.dropout(paragraph_rep)
         
         raw_scores = torch.sum(self.query_for_sentence_ranking * paragraph_rep, dim=-1)
-        
+
         return raw_scores

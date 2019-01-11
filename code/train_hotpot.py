@@ -14,7 +14,8 @@ from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 import numpy as np
 from sklearn.metrics import f1_score, accuracy_score
 
-# import utils
+
+import utils
 from hotpot_model import SentenceSelector
 import options
 
@@ -37,15 +38,15 @@ train_data = utils.unpickler(options.data_pkl_path, options.train_pkl_name)
 dev_data = utils.unpickler(options.data_pkl_path, options.dev_pkl_name)
 
 
-train_dataset = TensorDataset(train_data["sequences"], train_data["segment_ids"],
-train_data["supporting_fact"])
+train_dataset = TensorDataset(torch.tensor(train_data["sequences"]), torch.tensor(train_data["segment_ids"]),
+torch.tensor(train_data["supporting_fact"], dtype=torch.float32))
 
-dev_dataset = TensorDataset(dev_data["sequences"], dev_data["segment_ids"],
-dev_data["supporting_fact"])
+dev_dataset = TensorDataset(torch.tensor(dev_data["sequences"]), torch.tensor(dev_data["segment_ids"]),
+torch.tensor(dev_data["supporting_fact"], dtype=torch.float32))
 
 train_data_loader = DataLoader(train_dataset, batch_size=options.batch_size, shuffle=True, sampler=None, batch_sampler=None, num_workers=0, pin_memory=True, drop_last=False, timeout=0, worker_init_fn=None)
 
-dev_data_loader = DataLoader(dev_dataset, batch_size=options.batch_size, shuffle=False, sampler=None, batch_sampler=None, num_workers=0, pin_memory=True, drop_last=False, timeout=0, worker_init_fn=None)
+dev_data_loader = DataLoader(dev_dataset, batch_size=options.dev_batch_size, shuffle=False, sampler=None, batch_sampler=None, num_workers=0, pin_memory=True, drop_last=False, timeout=0, worker_init_fn=None)
 
 
 
@@ -97,16 +98,17 @@ start = time.time()
 best_dev_f1 = -1
 
 
-routine_log_template = 'Time:{:.4f}, Epoch:{}/{}, Iteration:{}, Avg_train_loss:{:.4f}, batch_loss:{:.4f}, batch_EM:{:.2f}, batch_F1:{:.2f}'
+routine_log_template = 'Time:{:.2f}, Epoch:{}/{}, Iteration:{}, Avg_train_loss:{:.4f}, batch_loss:{:.4f}, batch_EM:{:.4f}, batch_F1:{:.4f}'
 
-dev_log_template = 'Dev set - Exact match:{:.2f}, F1:{:.2f}'
+dev_log_template = 'Dev set - Exact match:{:.4f}, F1:{:.4f}'
 
-
+print("Training data size:{}".format(len(train_dataset)))
+print("Dev data size:{}".format(len(dev_dataset)))
 print("Training now")
 
 total_loss_since_last_time = 0
 
-num_epochs_since_last_best_dev_acc  = 0
+num_evaluations_since_last_best_dev_acc  = 0
 
 dev_predictions_best_model = None
 
@@ -115,6 +117,8 @@ stop_training_flag = False
 for epoch in range(options.epochs):
     
     for batch_idx, batch in enumerate(train_data_loader):
+        
+        batch = [t.to(device) for t in batch]
 
         model.train(); optimizer.zero_grad()
         
@@ -123,7 +127,7 @@ for epoch in range(options.epochs):
         answer = model(batch[0], batch[1])
         
         gt_labels = batch[2]
-        
+    
         loss = criterion(answer, gt_labels) 
         
         if(torch.isnan(loss).item()):
@@ -166,58 +170,59 @@ for epoch in range(options.epochs):
                     if f != snapshot_path:
                         os.remove(f)
      
+        if iterations % options.evaluate_every == 0:
+            print("Evaluating on dev set")
+
+            # switch model to evaluation mode
+            model.eval()
+
+            answers_for_whole_dev_set = []
+            with torch.no_grad():
+                for dev_batch_idx, dev_batch in enumerate(dev_data_loader):
+                    dev_batch = [t.to(device) for t in dev_batch]
+                    dev_answer = model(dev_batch[0], dev_batch[1])
+                    answers_for_whole_dev_set.append(dev_answer.cpu().numpy())
+
+            answers_for_whole_dev_set = np.concatenate(answers_for_whole_dev_set, axis = 0)
+
+            dev_answer_labels = (torch.sigmoid(torch.tensor(answers_for_whole_dev_set)) > options.decision_threshold).numpy()
+            
+            dev_exact_match = accuracy_score(np.array(dev_data["supporting_fact"]), dev_answer_labels)
+            
+            dev_f1 = f1_score(np.array(dev_data["supporting_fact"]), dev_answer_labels, average='micro')
+
+            print(dev_log_template.format(dev_exact_match,dev_f1))
+
+
+            # update best valiation set accuracy
+            if dev_f1 > best_dev_f1:
+                
+                dev_predictions_best_model = answers_for_whole_dev_set
+                
+                num_evaluations_since_last_best_dev_acc = 0
+                
+                # found a model with better validation set accuracy
+
+                best_dev_f1 = dev_f1
+                snapshot_prefix = os.path.join(options.save_path, 'best_snapshot')
+                snapshot_path = snapshot_prefix + '_dev_f1_{}_iter_{}_model.pt'.format(dev_f1, iterations)
+
+                # save model, delete previous 'best_snapshot' files
+                torch.save(model.state_dict(), snapshot_path)
+                for f in glob.glob(snapshot_prefix + '*'):
+                    if f != snapshot_path:
+                        os.remove(f)
+            else:
+                num_evaluations_since_last_best_dev_acc += 1
+            
+            if(num_evaluations_since_last_best_dev_acc > options.early_stopping_patience):
+                print("Training stopped because dev acc hasn't increased in {} epochs.".format(options.early_stopping_patience))
+                print("Best dev set accuracy = {}".format(best_dev_f1))
+                stop_training_flag = True
+                break
+
     if(stop_training_flag == True):
         break
-                    
-    print("Evaluating on dev set")
-
-    # switch model to evaluation mode
-    model.eval()
-
-    answers_for_whole_dev_set = []
-    with torch.no_grad():
-        for dev_batch_idx, dev_batch in enumerate(dev_data_loader):
-            dev_answer = model(dev_batch[0], dev_batch[1])
-            answers_for_whole_dev_set.append(dev_answer.cpu().numpy())
-
-    answers_for_whole_dev_set = np.concatenate(answers_for_whole_dev_set, axis = 0)
-
-    dev_answer_labels = thresholded_answer = torch.sigmoid(answers_for_whole_dev_set) > options.decision_threshold 
-    
-    dev_exact_match = accuracy_score(np.array(dev_data["supporting_fact"]), dev_answer_labels)
-    
-    dev_f1 = f1_score(np.array(dev_data["supporting_fact"]), dev_answer_labels, average='micro')
-
-    print(dev_log_template.format(dev_exact_match,dev_f1))
-
-
-    # update best valiation set accuracy
-    if dev_f1 > best_dev_f1:
-        
-        dev_predictions_best_model = answers_for_whole_dev_set
-        
-        num_epochs_since_last_best_dev_acc = 0
-        
-        # found a model with better validation set accuracy
-
-        best_dev_f1 = dev_f1
-        snapshot_prefix = os.path.join(options.save_path, 'best_snapshot')
-        snapshot_path = snapshot_prefix + '_dev_f1_{}_iter_{}_model.pt'.format(dev_f1, iterations)
-
-        # save model, delete previous 'best_snapshot' files
-        torch.save(model.state_dict(), snapshot_path)
-        for f in glob.glob(snapshot_prefix + '*'):
-            if f != snapshot_path:
-                os.remove(f)
-    else:
-        num_epochs_since_last_best_dev_acc += 1
-    
-    if(num_epochs_since_last_best_dev_acc > options.early_stopping_patience):
-        print("Training stopped because dev acc hasn't increased in {} epochs.".format(options.early_stopping_patience))
-        print("Best dev set accuracy = {}".format(best_dev_f1))
-        break
-
-        
 
 # save best predictions
 if(dev_predictions_best_model is not None):
