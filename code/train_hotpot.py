@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
+from torch.utils.data import Dataset, DataLoader, TensorDataset
 
 from pytorch_pretrained_bert.optimization import BertAdam
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
@@ -13,8 +14,8 @@ from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 import numpy as np
 from sklearn.metrics import f1_score, accuracy_score
 
-import utils
-from model import SentenceSelector
+# import utils
+from hotpot_model import SentenceSelector
 import options
 
 import pdb
@@ -35,17 +36,33 @@ print("Reading data pickles")
 train_data = utils.unpickler(options.data_pkl_path, options.train_pkl_name)
 dev_data = utils.unpickler(options.data_pkl_path, options.dev_pkl_name)
 
+
+train_dataset = TensorDataset(train_data["sequences"], train_data["segment_ids"],
+train_data["supporting_fact"])
+
+dev_dataset = TensorDataset(dev_data["sequences"], dev_data["segment_ids"],
+dev_data["supporting_fact"])
+
+train_data_loader = DataLoader(train_dataset, batch_size=options.batch_size, shuffle=True, sampler=None, batch_sampler=None, num_workers=0, pin_memory=True, drop_last=False, timeout=0, worker_init_fn=None)
+
+dev_data_loader = DataLoader(dev_dataset, batch_size=options.batch_size, shuffle=False, sampler=None, batch_sampler=None, num_workers=0, pin_memory=True, drop_last=False, timeout=0, worker_init_fn=None)
+
+
+
 print("Building model")
 
 model = SentenceSelector(options, device)
-
-model.to(device)
 
 print("===============================")
 print("Model:")
 print(model)
 print("===============================")
 
+if torch.cuda.device_count() > 1:
+  print("Using", torch.cuda.device_count(), "GPUs")
+  model = nn.DataParallel(model)
+
+model.to(device)
 
 criterion = nn.BCEWithLogitsLoss()
 # opt = BertAdam(model.parameters(), lr=options.lr,  weight_decay=options.weight_decay)
@@ -65,7 +82,7 @@ optimizer_grouped_parameters = [
     ]
 
 num_train_steps = int(
-            len(train_data["sequence_0"]) / options.batch_size / options.gradient_accumulation_steps * options.epochs)
+            len(train_data["sequences"]) / options.batch_size / options.gradient_accumulation_steps * options.epochs)
 
 t_total = num_train_steps
 optimizer = BertAdam(optimizer_grouped_parameters,
@@ -85,15 +102,6 @@ routine_log_template = 'Time:{:.4f}, Epoch:{}/{}, Iteration:{}, Avg_train_loss:{
 dev_log_template = 'Dev set - Exact match:{:.2f}, F1:{:.2f}'
 
 
-
-train_data_len = len(train_data["sequence_0"])
-dev_data_len = len(dev_data["sequence_0"])
-
-train_minibatch_from_indices = utils.MinibatchFromIndices(train_data, device)
-dev_minibatch_from_indices = utils.MinibatchFromIndices(dev_data, device)
-
-del train_data
-
 print("Training now")
 
 total_loss_since_last_time = 0
@@ -106,19 +114,15 @@ stop_training_flag = False
 
 for epoch in range(options.epochs):
     
-    train_minibatch_index_generator = utils.minibatch_indices_generator(train_data_len, options.batch_size)
-    
-    
-    for batch_idx, minibatch_indices in enumerate(train_minibatch_index_generator):
-        batch = train_minibatch_from_indices.get(minibatch_indices)
-        
+    for batch_idx, batch in enumerate(train_data_loader):
+
         model.train(); optimizer.zero_grad()
         
         iterations += 1
         
-        answer = model(batch)
+        answer = model(batch[0], batch[1])
         
-        gt_labels = batch["supporting_fact"]#.int()
+        gt_labels = batch[2]
         
         loss = criterion(answer, gt_labels) 
         
@@ -166,21 +170,15 @@ for epoch in range(options.epochs):
         break
                     
     print("Evaluating on dev set")
-    dev_minibatch_index_generator = utils.minibatch_indices_generator(dev_data_len, options.batch_size, shuffle=False)
 
     # switch model to evaluation mode
     model.eval()
 
     answers_for_whole_dev_set = []
-    total_dev_loss = 0
     with torch.no_grad():
-        for dev_batch_idx, dev_minibatch_indices in enumerate(dev_minibatch_index_generator):
-            dev_batch = dev_minibatch_from_indices.get(dev_minibatch_indices)
-            dev_answer = model(dev_batch)
+        for dev_batch_idx, dev_batch in enumerate(dev_data_loader):
+            dev_answer = model(dev_batch[0], dev_batch[1])
             answers_for_whole_dev_set.append(dev_answer.cpu().numpy())
-            dev_gt_labels = dev_batch["supporting_fact"]#.int()
-            dev_loss = criterion(dev_answer, dev_gt_labels)
-            total_dev_loss += dev_loss.item()
 
     answers_for_whole_dev_set = np.concatenate(answers_for_whole_dev_set, axis = 0)
 

@@ -41,13 +41,13 @@ class HotpotOptions:
     def __init__(self):
         
         # ----Training----
-        self.epochs = 3
-        self.batch_size = 2
+        self.epochs = 2
+        self.batch_size = 128
         self.log_every = 100
         self.save_every = self.log_every * 500
         self.early_stopping_patience = 4
         self.gradient_accumulation_steps = 1  # only 1 is supported
-        self.gpu = 0
+        self.gpu = 0 # this will be the primary GPU if there are > 1 GPU
         
         # ----Vocab and embedding----
         
