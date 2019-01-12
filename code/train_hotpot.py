@@ -216,6 +216,9 @@ for epoch in range(options.epochs):
         for f in glob.glob(snapshot_prefix + '*'):
             if f != snapshot_path:
                 os.remove(f)
+        
+        # save best predictions
+        utils.pickler(options.save_path, options.predictions_pkl_name, dev_predictions_best_model)
     else:
         num_evaluations_since_last_best_dev_acc += 1
     
@@ -224,8 +227,5 @@ for epoch in range(options.epochs):
         print("Best dev set accuracy = {}".format(best_dev_f1))
 
     
-
-# save best predictions
-if(dev_predictions_best_model is not None):
-    utils.pickler(options.save_path, options.predictions_pkl_name, dev_predictions_best_model)
+    
 
