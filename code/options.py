@@ -41,7 +41,7 @@ class HotpotOptions:
     def __init__(self):
         
         # ----Training----
-        self.epochs = 2
+        self.epochs = 3
         self.batch_size = 128
         self.dev_batch_size = 1024
         self.log_every = 100

@@ -160,6 +160,7 @@ for epoch in range(options.epochs):
             total_loss_since_last_time = 0
             
             print(routine_log_template.format(time.time()-start, epoch+1, options.epochs, iterations,avg_loss, loss.item(), train_exact_match, train_f1))
+            print("Number of 1s in GT:{}, Number of 1s in prediction:{}".format(gt_labels.cpu().numpy().sum(), thresholded_answer.detach().cpu().numpy().sum()))
         
         
             if iterations % options.save_every == 0:
@@ -170,59 +171,59 @@ for epoch in range(options.epochs):
                     if f != snapshot_path:
                         os.remove(f)
      
-        if iterations % options.evaluate_every == 0:
-            print("Evaluating on dev set")
-
-            # switch model to evaluation mode
-            model.eval()
-
-            answers_for_whole_dev_set = []
-            with torch.no_grad():
-                for dev_batch_idx, dev_batch in enumerate(dev_data_loader):
-                    dev_batch = [t.to(device) for t in dev_batch]
-                    dev_answer = model(dev_batch[0], dev_batch[1])
-                    answers_for_whole_dev_set.append(dev_answer.cpu().numpy())
-
-            answers_for_whole_dev_set = np.concatenate(answers_for_whole_dev_set, axis = 0)
-
-            dev_answer_labels = (torch.sigmoid(torch.tensor(answers_for_whole_dev_set)) > options.decision_threshold).numpy()
-            
-            dev_exact_match = accuracy_score(np.array(dev_data["supporting_fact"]), dev_answer_labels)
-            
-            dev_f1 = f1_score(np.array(dev_data["supporting_fact"]), dev_answer_labels, average='micro')
-
-            print(dev_log_template.format(dev_exact_match,dev_f1))
-
-
-            # update best valiation set accuracy
-            if dev_f1 > best_dev_f1:
-                
-                dev_predictions_best_model = answers_for_whole_dev_set
-                
-                num_evaluations_since_last_best_dev_acc = 0
-                
-                # found a model with better validation set accuracy
-
-                best_dev_f1 = dev_f1
-                snapshot_prefix = os.path.join(options.save_path, 'best_snapshot')
-                snapshot_path = snapshot_prefix + '_dev_f1_{}_iter_{}_model.pt'.format(dev_f1, iterations)
-
-                # save model, delete previous 'best_snapshot' files
-                torch.save(model.state_dict(), snapshot_path)
-                for f in glob.glob(snapshot_prefix + '*'):
-                    if f != snapshot_path:
-                        os.remove(f)
-            else:
-                num_evaluations_since_last_best_dev_acc += 1
-            
-            if(num_evaluations_since_last_best_dev_acc > options.early_stopping_patience):
-                print("Training stopped because dev acc hasn't increased in {} epochs.".format(options.early_stopping_patience))
-                print("Best dev set accuracy = {}".format(best_dev_f1))
-                stop_training_flag = True
-                break
-
     if(stop_training_flag == True):
         break
+    
+    print("Evaluating on dev set")
+
+    # switch model to evaluation mode
+    model.eval()
+
+    answers_for_whole_dev_set = []
+    with torch.no_grad():
+        for dev_batch_idx, dev_batch in enumerate(dev_data_loader):
+            dev_batch = [t.to(device) for t in dev_batch]
+            dev_answer = model(dev_batch[0], dev_batch[1])
+            answers_for_whole_dev_set.append(dev_answer.cpu().numpy())
+
+    answers_for_whole_dev_set = np.concatenate(answers_for_whole_dev_set, axis = 0)
+
+    dev_answer_labels = (torch.sigmoid(torch.tensor(answers_for_whole_dev_set)) > options.decision_threshold).numpy()
+    
+    dev_exact_match = accuracy_score(np.array(dev_data["supporting_fact"]), dev_answer_labels)
+    
+    dev_f1 = f1_score(np.array(dev_data["supporting_fact"]), dev_answer_labels, average='micro')
+
+    print(dev_log_template.format(dev_exact_match,dev_f1))
+    print("Number of 1s in GT:{}, Number of 1s in prediction:{}".format(sum(dev_data["supporting_fact"]), dev_answer_labels.sum()))
+
+
+    # update best valiation set accuracy
+    if dev_f1 > best_dev_f1:
+        
+        dev_predictions_best_model = answers_for_whole_dev_set
+        
+        num_evaluations_since_last_best_dev_acc = 0
+        
+        # found a model with better validation set accuracy
+
+        best_dev_f1 = dev_f1
+        snapshot_prefix = os.path.join(options.save_path, 'best_snapshot')
+        snapshot_path = snapshot_prefix + '_dev_f1_{}_iter_{}_model.pt'.format(dev_f1, iterations)
+
+        # save model, delete previous 'best_snapshot' files
+        torch.save(model.state_dict(), snapshot_path)
+        for f in glob.glob(snapshot_prefix + '*'):
+            if f != snapshot_path:
+                os.remove(f)
+    else:
+        num_evaluations_since_last_best_dev_acc += 1
+    
+    if(num_evaluations_since_last_best_dev_acc > options.early_stopping_patience):
+        print("Training stopped because dev acc hasn't increased in {} epochs.".format(options.early_stopping_patience))
+        print("Best dev set accuracy = {}".format(best_dev_f1))
+
+    
 
 # save best predictions
 if(dev_predictions_best_model is not None):
