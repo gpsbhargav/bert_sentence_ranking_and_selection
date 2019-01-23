@@ -257,7 +257,7 @@ for epoch in range(options.epochs):
     dev_f1 = dev_metrics["f1"]
 
     print(dev_log_template.format(dev_exact_match,dev_f1))
-    print("Number of 1s in GT:{}, Number of 1s in prediction:{}".format(sum(dev_data["supporting_fact"]), dev_answer_labels.sum()))
+    # print("Number of 1s in GT:{}, Number of 1s in prediction:{}".format(sum(dev_data["supporting_fact"]), dev_answer_labels.sum()))
 
 
     # update best valiation set accuracy
