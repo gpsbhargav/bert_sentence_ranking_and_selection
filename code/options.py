@@ -41,7 +41,7 @@ class HotpotOptions:
     def __init__(self):
         
         # ----Training----
-        self.epochs = 6
+        self.epochs = 10
         self.batch_size = 128
         self.dev_batch_size = 1024
         self.log_every = 100
@@ -59,7 +59,7 @@ class HotpotOptions:
         
         # ----Data location, other paths----
         self.data_pkl_path = "../data/hotpot/"
-        self.train_pkl_name = "preprocessed_train_balanced.pkl"
+        self.train_pkl_name = "preprocessed_train.pkl"
         self.dev_pkl_name = "preprocessed_dev.pkl"
         self.save_path = "../saved_models/hotpot/"
         self.predictions_pkl_name = "predictions.pkl"
