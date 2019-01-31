@@ -149,13 +149,6 @@ optimizer = BertAdam(optimizer_grouped_parameters,
                              warmup=options.warmup_proportion,
                              t_total=t_total)
 
-
-
-iterations = 0
-start = time.time()
-best_dev_f1 = -1
-
-
 routine_log_template = 'Time:{:.2f}, Epoch:{}/{}, Iteration:{}, Avg_train_loss:{:.4f}, batch_loss:{:.4f}, batch_EM:{:.4f}, batch_F1:{:.4f}'
 
 dev_log_template = 'Dev set - Exact match:{:.4f}, F1:{:.4f}'
@@ -165,14 +158,31 @@ print("Dev data size:{}".format(len(dev_dataset)))
 print("Training now")
 
 total_loss_since_last_time = 0
-
 num_evaluations_since_last_best_dev_acc  = 0
-
 dev_predictions_best_model = None
-
 stop_training_flag = False
 
-for epoch in range(options.epochs):
+iterations = 0
+best_dev_f1 = -1
+start_epoch = 0
+
+
+if options.resume_training:
+    if os.path.isfile(os.path.join(options.save_path, options.checkpoint_name)):
+        print("=> loading checkpoint")
+        checkpoint = torch.load(os.path.join(options.save_path, options.checkpoint_name))
+        start_epoch = checkpoint['epoch']
+        best_dev_f1 = checkpoint['best_acc']
+        iterations = checkpoint['iteration']
+        model.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        print("=> loaded checkpoint. Resuming epoch {}, iteration {}"
+              .format(checkpoint['epoch']+1, checkpoint['iteration']))
+        
+
+start = time.time()
+
+for epoch in range(start_epoch, options.epochs):
     
     for batch_idx, batch in enumerate(train_data_loader):
         
@@ -224,9 +234,16 @@ for epoch in range(options.epochs):
         
         
             if iterations % options.save_every == 0:
-                snapshot_prefix = os.path.join(options.save_path, 'snapshot')
-                snapshot_path = snapshot_prefix + '_f1_{:.4f}_loss_{:.4f}_iter_{}_model.pt'.format(train_f1, loss.item(), iterations)
-                torch.save(model, snapshot_path)
+                snapshot_prefix = os.path.join(options.save_path, options.checkpoint_name)
+                snapshot_path = snapshot_prefix
+                state = {
+                            'epoch': epoch,
+                            'iteration': iterations,
+                            'state_dict': model.state_dict(),
+                            'best_acc': best_dev_f1,
+                            'optimizer' : optimizer.state_dict()
+                        }
+                torch.save(state, snapshot_path)
                 for f in glob.glob(snapshot_prefix + '*'):
                     if f != snapshot_path:
                         os.remove(f)
@@ -274,7 +291,14 @@ for epoch in range(options.epochs):
         snapshot_path = snapshot_prefix + '_dev_f1_{}_iter_{}_model.pt'.format(dev_f1, iterations)
 
         # save model, delete previous 'best_snapshot' files
-        torch.save(model.state_dict(), snapshot_path)
+        state = {
+                    'epoch': epoch,
+                    'iteration': iterations,
+                    'state_dict': model.state_dict(),
+                    'best_acc': best_dev_f1,
+                    'optimizer' : optimizer.state_dict()
+                }
+        torch.save(state, snapshot_path)
         for f in glob.glob(snapshot_prefix + '*'):
             if f != snapshot_path:
                 os.remove(f)

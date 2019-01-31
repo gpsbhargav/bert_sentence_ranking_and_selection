@@ -86,13 +86,12 @@ class ParagraphHotpotOptions:
         self.batch_size = 32
         self.dev_batch_size = 32
         self.log_every = 100
-        self.evaluate_every = 1000
-        self.save_every = self.log_every * 500
+        self.save_every = self.log_every * 5
         self.early_stopping_patience = 4
         self.gradient_accumulation_steps = 1  # only 1 is supported
         self.gpu = 0 # this will be the primary GPU if there are > 1 GPU
         self.use_multiple_gpu = True
-        
+        self.resume_training = True
         # ----Vocab and embedding----
         
         
@@ -107,6 +106,7 @@ class ParagraphHotpotOptions:
         self.save_path = "../saved_models/hotpot_doc_level/"
         self.predictions_pkl_name = "predictions.pkl"
         self.bert_archive = "../../bert_archive/"
+        self.checkpoint_name = "snapshot.pt"
         
         # ----Network hyperparameters----
         self.bert_type = 'bert-base-uncased' # one of bert-base-uncased or bert-large-uncased
