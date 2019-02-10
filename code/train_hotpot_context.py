@@ -2,6 +2,8 @@ import os
 import time
 import glob
 
+import copy
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -60,7 +62,7 @@ class HotpotContextDataset(Dataset):
         return len(self.data['sequence_0'])
 
     def __getitem__(self, index):
-        out_dict = {}
+        out_list = []
         for i in range(self.max_paragraphs):
             sentence_start_indices = self.data['sentence_start_index_{}'.format(i)][index]
             sentence_end_indices = self.data['sentence_end_index_{}'.format(i)][index]
@@ -90,13 +92,13 @@ class HotpotContextDataset(Dataset):
             assert(len(end_index_matrix) == self.max_sentences)
             
 
-            out_dict["sequence_{}".format(i)] = torch.tensor(sequence)
-            out_dict["segment_id_{}".format(i)] = torch.tensor(segment_id)
-            out_dict["start_index_matrix_{}".format(i)] = torch.tensor(start_index_matrix, dtype=torch.float32)
-            out_dict["end_index_matrix_{}".format(i)] = torch.tensor(end_index_matrix, dtype=torch.float32)
-            out_dict["supporting_fact_{}".format(i)] = torch.tensor(supporting_fact, dtype=torch.float32)
+            out_list.append(torch.tensor(sequence))
+            out_list.append(torch.tensor(segment_id))
+            out_list.append(torch.tensor(start_index_matrix, dtype=torch.float32))
+            out_list.append(torch.tensor(end_index_matrix, dtype=torch.float32))
+            out_list.append(torch.tensor(supporting_fact, dtype=torch.float32))
 
-        return out_dict
+        return out_list
 
 
 options = options.ContextHotpotOptions()
@@ -151,7 +153,7 @@ optimizer_grouped_parameters = [
     ]
 
 num_train_steps = int(
-            len(train_data["sequence"]) / options.batch_size / options.gradient_accumulation_steps * options.epochs)
+            len(train_data) / options.batch_size / options.gradient_accumulation_steps * options.epochs)
 
 t_total = num_train_steps
 optimizer = BertAdam(optimizer_grouped_parameters,
@@ -197,7 +199,7 @@ start = time.time()
 
 for epoch in range(start_epoch, options.epochs):
     
-    for batch_idx, batch_dict in enumerate(train_data_loader):
+    for batch_idx, batch_list in enumerate(train_data_loader):
         
         if(options.debugging_short_run):
             if(batch_idx == options.debugging_num_iterations+1):
@@ -206,58 +208,49 @@ for epoch in range(start_epoch, options.epochs):
         model.train(); optimizer.zero_grad()
         
         paragraph_reps = []
-        for i in range(options.num_paragraphs):
-
-            batch = [
-                batch_dict["sequence_{}".format(i)],
-                batch_dict["segment_id_{}".format(i)],
-                batch_dict["start_index_matrix_{}".format(i)],
-                batch_dict["end_index_matrix_{}".format(i)],
-                batch_dict["supporting_fact_{}".format(i)]
-            ]
+        
+        assert(len(batch_list)%5 == 0)
+        for i in range(0,len(batch_list), 5):
+            batch = [copy.deepcopy(item) for item in batch_list[i:i+5]]
 
             batch = [t.to(device) for t in batch]
 
-            p_rep = model(sequences=batch[0], segment_id=batch[1], start_index=batch[2], end_index=batch[3],vectors_in=None, return_only_pooled_rep=True)
+            p_rep = model(sequences=batch[0], segment_id=batch[1], start_index=batch[2], end_index=batch[3],vectors_in=None, return_only_pooled_rep=True)   
             
+            p_rep = p_rep.unsqueeze(1)
+
             assert(len(p_rep.shape) == 3)
 
             paragraph_reps.append(p_rep)
-
+        
         loss = None
         gt_labels = []
         answer = []
-        for i in range(options.num_paragraphs): 
-
-            batch = [
-                batch_dict["sequence_{}".format(i)],
-                batch_dict["segment_id_{}".format(i)],
-                batch_dict["start_index_matrix_{}".format(i)],
-                batch_dict["end_index_matrix_{}".format(i)],
-                batch_dict["supporting_fact_{}".format(i)]
-            ]
-
-            context_vectors = torch.cat([j for j in paragraph_reps if j!=i], dim=1)
-
-            batch[0][:,:,-context_vectors.shape[1]:] = torch.ones_like(context_vectors)
+        for i in range(0,len(batch_list), 5):
+            batch = [copy.deepcopy(item) for item in batch_list[i:i+5]]
+                        
+            context_vectors = torch.cat([pr for j,pr in enumerate(paragraph_reps) if j!=i], dim=1)
+            
+            batch[0][:,-context_vectors.shape[1]:] = torch.ones_like(batch[0][:,-context_vectors.shape[1]:])
 
             batch = [t.to(device) for t in batch]
 
             batch_sf_pred = model(sequences=batch[0], segment_id=batch[1], start_index=batch[2], end_index=batch[3],vectors_in=context_vectors, return_only_pooled_rep=False)
 
+            l = criterion(batch_sf_pred, batch[4]) 
+            
+            if(loss is None):
+                loss = l
+            else:
+                loss = loss + l/options.num_paragraphs
+
             assert(len(batch_sf_pred.shape) == 2)
 
             answer.append(batch_sf_pred)
             
-            gt_labels.append(batch[4])
-        
-            l = criterion(batch_sf_pred, batch[4]) 
+            gt_labels.append(copy.deepcopy(batch[4].cpu()))
 
-            if(loss is None):
-                loss = l
-            else:
-                loss = loss + l
-        
+        loss.backward()
         iterations += 1
         
         if(torch.isnan(loss).item()):
@@ -270,7 +263,6 @@ for epoch in range(start_epoch, options.epochs):
             break
         
         total_loss_since_last_time += loss.item()
-        loss.backward()
         
         lr_this_step = options.learning_rate * warmup_linear(iterations/t_total, options.warmup_proportion)
         for param_group in optimizer.param_groups:
@@ -279,14 +271,14 @@ for epoch in range(start_epoch, options.epochs):
         
         if iterations % options.log_every == 0:
             answer = torch.cat(answer,dim=-1)
-            gt_labels = np.concatenate(gt_labels,axis=-1)
+            gt_labels = torch.cat(gt_labels,dim=-1).numpy()
 
             assert(len(answer.shape) == 2)
             assert(len(gt_labels.shape) == 2)
 
             thresholded_answer = torch.sigmoid(answer) > options.decision_threshold
             
-            metrics = evaluate(gt_labels.cpu().numpy(), thresholded_answer.detach().cpu().numpy())
+            metrics = evaluate(gt_labels, thresholded_answer.detach().cpu().numpy())
 
             train_exact_match = metrics["em"]
             
@@ -296,7 +288,7 @@ for epoch in range(start_epoch, options.epochs):
             total_loss_since_last_time = 0
             
             print(routine_log_template.format(time.time()-start, epoch+1, options.epochs, iterations,avg_loss, loss.item(), train_exact_match, train_f1))
-            print("Number of 1s in GT:{}, Number of 1s in prediction:{}".format(gt_labels.cpu().numpy().sum(), thresholded_answer.detach().cpu().numpy().sum()))
+            print("Number of 1s in GT:{}, Number of 1s in prediction:{}".format(gt_labels.sum(), thresholded_answer.detach().cpu().numpy().sum()))
         
         
             if iterations % options.save_every == 0:
@@ -325,43 +317,30 @@ for epoch in range(start_epoch, options.epochs):
     answers_for_whole_dev_set = []
     gt_for_whole_dev_set = []
     with torch.no_grad():
-        for dev_batch_idx, dev_batch_dict in enumerate(dev_data_loader):
+        for dev_batch_idx, dev_batch_list in enumerate(dev_data_loader):
 
             dev_paragraph_reps = []
-
-            for i in range(options.num_paragraphs):
-
-                dev_batch = [
-                    dev_batch_dict["sequence_{}".format(i)],
-                    dev_batch_dict["segment_id_{}".format(i)],
-                    dev_batch_dict["start_index_matrix_{}".format(i)],
-                    dev_batch_dict["end_index_matrix_{}".format(i)],
-                    dev_batch_dict["supporting_fact_{}".format(i)]
-                ]
-                
+            
+            assert(len(dev_batch_list)%5 == 0)
+            for i in range(0,len(dev_batch_list), 5):
+                dev_batch = [copy.deepcopy(item) for item in dev_batch_list[i:i+5]]
                 dev_batch = [t.to(device) for t in dev_batch]
 
                 dev_p_rep = model(sequences=dev_batch[0], segment_id=dev_batch[1], start_index=dev_batch[2], end_index=dev_batch[3],vectors_in=None, return_only_pooled_rep=True)
-
+                
+                dev_p_rep = dev_p_rep.unsqueeze(1)
                 assert(len(dev_p_rep.shape) == 3)
                 dev_paragraph_reps.append(dev_p_rep)
             
             dev_gt_labels = []
             dev_answer = []
             
-            for i in range(options.num_paragraphs): 
-
-                dev_batch = [
-                    dev_batch_dict["sequence_{}".format(i)],
-                    dev_batch_dict["segment_id_{}".format(i)],
-                    dev_batch_dict["start_index_matrix_{}".format(i)],
-                    dev_batch_dict["end_index_matrix_{}".format(i)],
-                    dev_batch_dict["supporting_fact_{}".format(i)]
-                ]
-
-                dev_context_vectors = torch.cat([j for j in dev_paragraph_reps if j!=i], dim=1)
+            for i in range(0,len(dev_batch_list), 5):
+                dev_batch = [copy.deepcopy(item) for item in dev_batch_list[i:i+5]]
                 
-                dev_batch[0][:,:,-dev_context_vectors.shape[1]:] = torch.ones_like(dev_context_vectors)
+                dev_context_vectors = torch.cat([pr for j,pr in enumerate(dev_paragraph_reps) if j!=i], dim=1)
+                
+                dev_batch[0][:,-dev_context_vectors.shape[1]:] = torch.ones_like(dev_batch[0][:,-dev_context_vectors.shape[1]:])
                 
                 dev_batch = [t.to(device) for t in dev_batch]
 
@@ -374,7 +353,7 @@ for epoch in range(start_epoch, options.epochs):
                 dev_gt_labels.append(dev_batch[4])
 
             dev_answer = torch.cat(dev_answer,dim=-1)
-            dev_gt_labels = np.concatenate(dev_gt_labels,axis=-1)
+            dev_gt_labels = torch.cat(dev_gt_labels,dim=-1)
 
             assert(len(dev_answer.shape) == 2)
             assert(len(dev_gt_labels.shape) == 2)

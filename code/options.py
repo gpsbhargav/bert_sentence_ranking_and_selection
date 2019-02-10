@@ -126,9 +126,9 @@ class ContextHotpotOptions:
         
         # ----Training----
         self.epochs = 10
-        self.batch_size = 16
-        self.dev_batch_size = 512
-        self.log_every = 100
+        self.batch_size = 1
+        self.dev_batch_size = 64
+        self.log_every = 10
         self.save_every = self.log_every * 5
         self.early_stopping_patience = 4
         self.gradient_accumulation_steps = 1  # only 1 is supported
