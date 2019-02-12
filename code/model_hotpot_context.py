@@ -29,14 +29,14 @@ class SentenceSelector(nn.Module):
         float_mask =  float_mask.masked_fill(mask=mask, value=-1e-20)
         return float_mask
     
-    def forward(self, sequences, segment_id, start_index, end_index, vectors_in=None, return_only_pooled_rep=False):
+    def forward(self, sequences, segment_id, start_index, end_index, vectors_in=None, return_only_para_encoding=False):
 
         sentence_mask = self.construct_binary_mask(sequences)
         
         paragraph_encoding, pooled_representation = self.bert(sequences,token_type_ids=segment_id,attention_mask=sentence_mask, output_all_encoded_layers=False, vectors_in=vectors_in)
 
-        if(return_only_pooled_rep):
-            return pooled_representation
+        if(return_only_para_encoding):
+            return paragraph_encoding
         
         paragraph_encoding = paragraph_encoding.permute(0,2,1)
         start_vectors = torch.bmm(paragraph_encoding, start_index.permute(0,2,1)).permute(0,2,1)

@@ -126,8 +126,8 @@ class ContextHotpotOptions:
         
         # ----Training----
         self.epochs = 10
-        self.batch_size = 1
-        self.dev_batch_size = 64
+        self.batch_size = 16
+        self.dev_batch_size = 32
         self.log_every = 10
         self.save_every = self.log_every * 5
         self.early_stopping_patience = 4
@@ -158,7 +158,7 @@ class ContextHotpotOptions:
             self.bert_hidden_size = 1024
         
         self.dropout = 0.1  # doesn't apply to BERT
-        self.learning_rate = 3e-5
+        self.learning_rate = 3e-6
         self.warmup_proportion = 0.1
         self.decision_threshold = 0.5
 

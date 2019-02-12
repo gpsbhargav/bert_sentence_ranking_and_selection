@@ -205,52 +205,60 @@ for epoch in range(start_epoch, options.epochs):
             if(batch_idx == options.debugging_num_iterations+1):
                 break
         
-        model.train(); optimizer.zero_grad()
-        
         paragraph_reps = []
-        
         assert(len(batch_list)%5 == 0)
-        for i in range(0,len(batch_list), 5):
-            batch = [copy.deepcopy(item) for item in batch_list[i:i+5]]
+        
+        model.eval()
+        with torch.no_grad():
+            for i in range(0,len(batch_list), 5):
+                batch = [item for item in batch_list[i:i+5]]
 
-            batch = [t.to(device) for t in batch]
+                batch = [t.to(device) for t in batch]
 
-            p_rep = model(sequences=batch[0], segment_id=batch[1], start_index=batch[2], end_index=batch[3],vectors_in=None, return_only_pooled_rep=True)   
-            
-            p_rep = p_rep.unsqueeze(1)
+                p_rep = model(sequences=batch[0], segment_id=batch[1], start_index=batch[2], end_index=batch[3],vectors_in=None, return_only_para_encoding=True).mean(dim=1)   
+                
+                p_rep = p_rep.unsqueeze(1)
 
-            assert(len(p_rep.shape) == 3)
+                assert(len(p_rep.shape) == 3)
 
-            paragraph_reps.append(p_rep)
+                paragraph_reps.append(p_rep)
+
+        model.train(); optimizer.zero_grad()
         
         loss = None
         gt_labels = []
         answer = []
         for i in range(0,len(batch_list), 5):
-            batch = [copy.deepcopy(item) for item in batch_list[i:i+5]]
-                        
+            batch = [item for item in batch_list[i:i+5]]
+            
             context_vectors = torch.cat([pr for j,pr in enumerate(paragraph_reps) if j!=i], dim=1)
             
             batch[0][:,-context_vectors.shape[1]:] = torch.ones_like(batch[0][:,-context_vectors.shape[1]:])
 
             batch = [t.to(device) for t in batch]
 
-            batch_sf_pred = model(sequences=batch[0], segment_id=batch[1], start_index=batch[2], end_index=batch[3],vectors_in=context_vectors, return_only_pooled_rep=False)
+            batch_sf_pred = model(sequences=batch[0], segment_id=batch[1], start_index=batch[2], end_index=batch[3],vectors_in=context_vectors, return_only_para_encoding=False)
 
             l = criterion(batch_sf_pred, batch[4]) 
             
             if(loss is None):
-                loss = l
+                loss = l/options.num_paragraphs
             else:
                 loss = loss + l/options.num_paragraphs
+
+            l.backward()
 
             assert(len(batch_sf_pred.shape) == 2)
 
             answer.append(batch_sf_pred)
             
-            gt_labels.append(copy.deepcopy(batch[4].cpu()))
+            gt_labels.append(batch[4].cpu())
 
-        loss.backward()
+        lr_this_step = options.learning_rate * warmup_linear(iterations/t_total, options.warmup_proportion)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr_this_step
+        optimizer.step()
+        
         iterations += 1
         
         if(torch.isnan(loss).item()):
@@ -263,11 +271,6 @@ for epoch in range(start_epoch, options.epochs):
             break
         
         total_loss_since_last_time += loss.item()
-        
-        lr_this_step = options.learning_rate * warmup_linear(iterations/t_total, options.warmup_proportion)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr_this_step
-        optimizer.step()
         
         if iterations % options.log_every == 0:
             answer = torch.cat(answer,dim=-1)
@@ -323,10 +326,10 @@ for epoch in range(start_epoch, options.epochs):
             
             assert(len(dev_batch_list)%5 == 0)
             for i in range(0,len(dev_batch_list), 5):
-                dev_batch = [copy.deepcopy(item) for item in dev_batch_list[i:i+5]]
+                dev_batch = [item for item in dev_batch_list[i:i+5]]
                 dev_batch = [t.to(device) for t in dev_batch]
 
-                dev_p_rep = model(sequences=dev_batch[0], segment_id=dev_batch[1], start_index=dev_batch[2], end_index=dev_batch[3],vectors_in=None, return_only_pooled_rep=True)
+                dev_p_rep = model(sequences=dev_batch[0], segment_id=dev_batch[1], start_index=dev_batch[2], end_index=dev_batch[3],vectors_in=None, return_only_para_encoding=True).mean(dim=1)
                 
                 dev_p_rep = dev_p_rep.unsqueeze(1)
                 assert(len(dev_p_rep.shape) == 3)
@@ -336,7 +339,7 @@ for epoch in range(start_epoch, options.epochs):
             dev_answer = []
             
             for i in range(0,len(dev_batch_list), 5):
-                dev_batch = [copy.deepcopy(item) for item in dev_batch_list[i:i+5]]
+                dev_batch = [item for item in dev_batch_list[i:i+5]]
                 
                 dev_context_vectors = torch.cat([pr for j,pr in enumerate(dev_paragraph_reps) if j!=i], dim=1)
                 
@@ -344,7 +347,7 @@ for epoch in range(start_epoch, options.epochs):
                 
                 dev_batch = [t.to(device) for t in dev_batch]
 
-                dev_batch_sf_pred = model(sequences=dev_batch[0], segment_id=dev_batch[1], start_index=dev_batch[2], end_index=dev_batch[3],vectors_in=dev_context_vectors, return_only_pooled_rep=False)
+                dev_batch_sf_pred = model(sequences=dev_batch[0], segment_id=dev_batch[1], start_index=dev_batch[2], end_index=dev_batch[3],vectors_in=dev_context_vectors, return_only_para_encoding=False)
 
                 assert(len(dev_batch_sf_pred.shape) == 2)
 
