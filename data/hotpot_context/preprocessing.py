@@ -62,16 +62,21 @@ out_pkl_path = "./"
 if(TRAINING):
     file_path = "/home/bhargav/data/hotpotqa/hotpot_train_v1.json"
     out_pkl_name = "preprocessed_train.pkl"
+    small_out_pkl_name = "preprocessed_train_small.pkl"
+    small_dataset_size = 5000
     problem_indices = [8437, 25197, 34122, 46031, 52955, 63867, 82250]
 else:
     file_path = "/home/bhargav/data/hotpotqa/hotpot_dev_distractor_v1.json"
     out_pkl_name = "preprocessed_dev.pkl"
+    small_out_pkl_name = "preprocessed_dev_small.pkl"
+    small_dataset_size = 500
     problem_indices = [5059]
     
     
 
-max_seq_len = 501  # Final sequence length will be max_seq_len + (max_num_paragraphs - 1) = 510
-max_sentences = 10 
+# max_seq_len = 501  # Final sequence length will be max_seq_len + (max_num_paragraphs - 1) = 510
+max_seq_len = 500
+max_sentences = 5 
 max_num_paragraphs = 10
 
 
@@ -356,11 +361,13 @@ for i in range(max_num_paragraphs):
 the_real_out_dict["document_length"] = out_dict['document_length']
 
 for i in trange(len(out_dict["sequence"])):
-    the_real_out_dict["sequence_{}".format(i%10)].append(out_dict["sequence"][i] + [0]*(max_num_paragraphs-1))
+#     the_real_out_dict["sequence_{}".format(i%10)].append(out_dict["sequence"][i] + [0]*(max_num_paragraphs-1))
+    the_real_out_dict["sequence_{}".format(i%10)].append(out_dict["sequence"][i])
     the_real_out_dict["sentence_start_index_{}".format(i%10)].append(out_dict["sentence_start_index"][i])
     the_real_out_dict["sentence_end_index_{}".format(i%10)].append(out_dict["sentence_end_index"][i])
     the_real_out_dict["supporting_fact_{}".format(i%10)].append(out_dict["supporting_fact"][i])
-    the_real_out_dict["segment_id_{}".format(i%10)].append(out_dict["segment_id"][i] + [1]*(max_num_paragraphs-1))
+#     the_real_out_dict["segment_id_{}".format(i%10)].append(out_dict["segment_id"][i] + [1]*(max_num_paragraphs-1))
+    the_real_out_dict["segment_id_{}".format(i%10)].append(out_dict["segment_id"][i])
 
 
 # In[ ]:
@@ -381,6 +388,29 @@ len(the_real_out_dict["sequence_0"][0])
 
 
 len(the_real_out_dict["segment_id_0"][0])
+
+
+# In[ ]:
+
+
+small_out_dict = {}
+for key, value in the_real_out_dict.items():
+    small_out_dict[key] = value[:small_dataset_size]
+
+
+# In[ ]:
+
+
+for key,value in small_out_dict.items():
+    if(type(value) == list):
+        print("key:{}, value_length:{}".format(key, len(value)))
+
+
+# In[ ]:
+
+
+pickler(out_pkl_path, small_out_pkl_name, small_out_dict)
+print("Done")
 
 
 # In[ ]:
