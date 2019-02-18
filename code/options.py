@@ -163,7 +163,57 @@ class ContextHotpotOptions:
         self.decision_threshold = 0.5
 
         # ----Debugging----
-        self.debugging_short_run = True
+        self.debugging_short_run = False
         self.debugging_num_iterations = self.log_every * 1
+
+
+class HTNHotpot:
+    def __init__(self):
+        
+        # ----Training----
+        self.epochs = 10
+        self.batch_size = 8
+        self.dev_batch_size = 32
+        self.log_every = 100
+        self.save_every = self.log_every * 5
+        self.early_stopping_patience = 4
+        self.gradient_accumulation_steps = 1  # only 1 is supported
+        self.gpu = 0 # this will be the primary GPU if there are > 1 GPU
+        self.use_multiple_gpu = False # not supported
+        self.resume_training = False
+                
+        # ----Data sizes, sequence lengths----
+        self.max_seq_len = 510
+        self.max_sentences = 10
+        self.num_paragraphs = 10
+        
+        # ----Data location, other paths----
+        self.data_pkl_path = "../data/hotpot_context/"
+        self.train_pkl_name = "preprocessed_train.pkl"
+        self.dev_pkl_name = "preprocessed_dev.pkl"
+        self.save_path = "../saved_models/htn_hotpot/"
+        self.predictions_pkl_name = "predictions.pkl"
+        # self.bert_archive = "../../bert_archive/"
+        self.checkpoint_name = "snapshot.pt"
+        
+        # ----Network hyperparameters----
+        self.bert_type = 'bert-base-uncased' # one of bert-base-uncased or bert-large-uncased
+        if(self.bert_type == 'bert-base-uncased'):
+            self.bert_hidden_size = 768
+        else:
+            self.bert_hidden_size = 1024
+        
+        self.num_encoder_layers = 3
+        self.num_decoder_layers = 3
+
+        self.dropout = 0.1  # doesn't apply to BERT
+        self.learning_rate = 1e-4
+        self.warmup_proportion = 0.05
+        self.decision_threshold = 0.5
+
+        # ----Debugging----
+        self.debugging_short_run = False
+        self.debugging_num_iterations = self.log_every * 1
+        self.debugging_num_dev_iterations = 100
         
 
