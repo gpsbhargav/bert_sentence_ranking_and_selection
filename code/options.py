@@ -82,8 +82,8 @@ class ParagraphHotpotOptions:
     def __init__(self):
         
         # ----Training----
-        self.epochs = 10
-        self.batch_size = 32
+        self.epochs = 5
+        self.batch_size = 16
         self.dev_batch_size = 32
         self.log_every = 100
         self.save_every = self.log_every * 5
@@ -91,13 +91,13 @@ class ParagraphHotpotOptions:
         self.gradient_accumulation_steps = 1  # only 1 is supported
         self.gpu = 0 # this will be the primary GPU if there are > 1 GPU
         self.use_multiple_gpu = True
-        self.resume_training = True
+        self.resume_training = False
         # ----Vocab and embedding----
         
         
         # ----Data sizes, sequence lengths----
-        self.max_seq_len = 510
-        self.max_sentences = 10
+        self.max_seq_len = 500
+        self.max_sentences = 5
         
         # ----Data location, other paths----
         self.data_pkl_path = "../data/hotpot_doc_level/"
@@ -171,10 +171,10 @@ class HTNHotpot:
     def __init__(self):
         
         # ----Training----
-        self.epochs = 10
-        self.batch_size = 8
+        self.epochs = 50
+        self.batch_size = 16
         self.dev_batch_size = 32
-        self.log_every = 100
+        self.log_every = 10
         self.save_every = self.log_every * 5
         self.early_stopping_patience = 4
         self.gradient_accumulation_steps = 1  # only 1 is supported
@@ -183,18 +183,30 @@ class HTNHotpot:
         self.resume_training = False
                 
         # ----Data sizes, sequence lengths----
-        self.max_seq_len = 510
-        self.max_sentences = 10
+        self.max_seq_len = 500
+        self.max_sentences = 5
         self.num_paragraphs = 10
-        
+
+        # ----Debugging short run----
+        self.debugging_short_run = False
+        self.debugging_num_iterations = self.log_every * 1
+        self.debugging_num_dev_iterations = 10
+
+        # ----Train on small dataset ?----
+        self.use_small_dataset = False
+
         # ----Data location, other paths----
         self.data_pkl_path = "../data/hotpot_context/"
-        self.train_pkl_name = "preprocessed_train.pkl"
-        self.dev_pkl_name = "preprocessed_dev.pkl"
-        self.save_path = "../saved_models/htn_hotpot/"
+        if(self.debugging_short_run or self.use_small_dataset):
+            self.train_pkl_name = "preprocessed_train_small.pkl"
+            self.dev_pkl_name = "preprocessed_dev_small.pkl"
+        else:
+            self.train_pkl_name = "preprocessed_train.pkl"
+            self.dev_pkl_name = "preprocessed_dev.pkl"
+        self.save_path = "../saved_models/htn_b_t_d2_4epochs/"
         self.predictions_pkl_name = "predictions.pkl"
-        # self.bert_archive = "../../bert_archive/"
         self.checkpoint_name = "snapshot.pt"
+        self.bert_archive = "../../bert_archive/"
         
         # ----Network hyperparameters----
         self.bert_type = 'bert-base-uncased' # one of bert-base-uncased or bert-large-uncased
@@ -204,16 +216,14 @@ class HTNHotpot:
             self.bert_hidden_size = 1024
         
         self.num_encoder_layers = 3
-        self.num_decoder_layers = 3
+        self.num_decoder_layers = 6
+        
+        self.train_encoder = True
 
         self.dropout = 0.1  # doesn't apply to BERT
-        self.learning_rate = 1e-4
-        self.warmup_proportion = 0.05
-        self.decision_threshold = 0.5
+        self.learning_rate = 3e-5
+        self.warmup_proportion = 0.1
+        self.loss_weight = 1.0  # make sure this is float.
 
-        # ----Debugging----
-        self.debugging_short_run = False
-        self.debugging_num_iterations = self.log_every * 1
-        self.debugging_num_dev_iterations = 100
         
 

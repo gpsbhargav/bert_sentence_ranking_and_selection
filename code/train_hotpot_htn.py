@@ -19,7 +19,7 @@ from sklearn.metrics import f1_score, accuracy_score, precision_score, recall_sc
 
 
 import utils
-from model_htn import Encoder, Decoder
+from model_htn import Encoder, Decoder, BERT
 import options
 
 import pdb
@@ -53,11 +53,11 @@ def warmup_linear(x, warmup=0.002):
 
 class HotpotDataset(Dataset):
 
-    def __init__(self, data):
+    def __init__(self, data, options):
         self.data = data
-        self.max_seq_len = 510
-        self.max_sentences = 10
-        self.max_paragraphs = 10
+        self.max_seq_len = options.max_seq_len
+        self.max_sentences = options.max_sentences
+        self.max_paragraphs = options.num_paragraphs
 
     def __len__(self):
         return len(self.data['sequence_0'])
@@ -112,9 +112,9 @@ print("Reading data pickles")
 train_data = utils.unpickler(options.data_pkl_path, options.train_pkl_name)
 dev_data = utils.unpickler(options.data_pkl_path, options.dev_pkl_name)
 
-train_dataset = HotpotDataset(train_data)
+train_dataset = HotpotDataset(train_data, options)
 
-dev_dataset = HotpotDataset(dev_data)
+dev_dataset = HotpotDataset(dev_data, options)
 
 train_data_loader = DataLoader(train_dataset, batch_size=options.batch_size, shuffle=True, sampler=None, batch_sampler=None, num_workers=8, pin_memory=False, drop_last=False, timeout=0, worker_init_fn=None)
 
@@ -126,7 +126,9 @@ encoder_config = BertConfig(vocab_size_or_config_json_file=30522,hidden_size=opt
 
 decoder_config = BertConfig(vocab_size_or_config_json_file=30522,hidden_size=options.bert_hidden_size, num_hidden_layers=options.num_decoder_layers, num_attention_heads=12, intermediate_size=3072)
 
-encoder = Encoder(encoder_config, options)
+# encoder = Encoder(encoder_config, options)
+
+encoder = BERT(options)
 decoder = Decoder(decoder_config, options)
 
 print("===============================")
@@ -145,7 +147,7 @@ print("===============================")
 encoder.to(device)
 decoder.to(device)
 
-criterion = nn.BCEWithLogitsLoss()
+criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([options.loss_weight],device=device))
 
 
 # Prepare optimizer
@@ -170,9 +172,9 @@ optimizer = BertAdam(optimizer_grouped_parameters,
                              warmup=options.warmup_proportion,
                              t_total=t_total)
 
-routine_log_template = 'Time:{:.2f}, Epoch:{}/{}, Iteration:{}, Avg_train_loss:{:.4f}, batch_loss:{:.4f}, batch_EM:{:.4f}, batch_F1:{:.4f}'
+routine_log_template = 'Time:{:.1f}, Epoch:{}/{}, Iteration:{}, Avg_train_loss:{:.4f}, batch_loss:{:.4f}, EM:{:.2f}, F1:{:.2f}, P:{:.2f}, R:{:.2f}, Threshold:{:.2f}'
 
-dev_log_template = 'Dev set - Exact match:{:.4f}, F1:{:.4f}'
+dev_log_template = 'Dev set - Exact match:{:.4f}, F1:{:.4f}, Precision:{:.4f}, Recall:{:.4f}, Threshold:{:.2f}'
 
 print("Training data size:{}".format(len(train_dataset)))
 print("Dev data size:{}".format(len(dev_dataset)))
@@ -215,27 +217,44 @@ for epoch in range(start_epoch, options.epochs):
             if(batch_idx == options.debugging_num_iterations+1):
                 break
         
-        sentence_reps = []
+        sentence_reps_list = []
         assert(len(batch_list)%5 == 0)
 
         gt_labels = []
 
-        encoder.train(); decoder.train(); optimizer.zero_grad()
-        # with torch.no_grad():
-        for i in range(0,len(batch_list), 5):
-            batch = [item for item in batch_list[i:i+5]]
-            batch = [t.to(device) for t in batch]
-            s_reps = encoder(sequences=batch[0], segment_id=batch[1], start_index=batch[2], end_index=batch[3])
-            assert(len(s_reps.shape) == 3)
-            sentence_reps.append(s_reps)
-            gt_labels.append(batch[4])
+        with torch.no_grad():
+            for i in range(0,len(batch_list), 5):
+                batch = [item for item in batch_list[i:i+5]]
+                batch = [t.to(device) for t in batch]
+                s_reps = encoder(sequences=batch[0], segment_id=batch[1], start_index=batch[2], end_index=batch[3])
+                assert(len(s_reps.shape) == 3)
+                sentence_reps_list.append(s_reps)
+                gt_labels.append(batch[4])
 
         gt_labels = torch.cat(gt_labels, dim=1)
-        sentence_reps = torch.cat(sentence_reps, dim=1)
+
+        if(options.train_encoder):
+            for s_r in sentence_reps_list:
+                s_r.requires_grad_(True)
+
+        sentence_reps = torch.cat(sentence_reps_list, dim=1)
+
+        encoder.train(); decoder.train(); optimizer.zero_grad()
+
         answer = decoder(sentence_reps)
         
         loss = criterion(answer, gt_labels) 
         loss.backward()
+        
+        if(options.train_encoder):
+            para_counter = 0
+            for i in range(0,len(batch_list), 5):
+                batch = [item for item in batch_list[i:i+5]]
+                batch = [t.to(device) for t in batch]
+                s_reps = encoder(sequences=batch[0], segment_id=batch[1], start_index=batch[2], end_index=batch[3])
+                s_reps.backward(gradient=sentence_reps_list[para_counter].grad)
+                para_counter += 1
+            
 
         lr_this_step = options.learning_rate * warmup_linear(iterations/t_total, options.warmup_proportion)
         for param_group in optimizer.param_groups:
@@ -263,17 +282,27 @@ for epoch in range(start_epoch, options.epochs):
             assert(len(gt_labels.shape) == 2)
 
             answer = answer.detach().cpu()
-
-            thresholded_answer = torch.sigmoid(answer) > options.decision_threshold
-            metrics = evaluate(gt_labels, thresholded_answer.numpy())
-            train_exact_match = metrics["em"]
-            train_f1 = metrics["f1"]
             
+            best_train_metrics = None
+            best_train_threshold = 0.5
+            best_train_thresholded_answer = None
+            for threshold in np.linspace(0.1,0.9,5):
+                thresholded_answer = torch.sigmoid(answer) > threshold
+                metrics = evaluate(gt_labels, thresholded_answer.numpy())
+                if(best_train_metrics == None):
+                    best_train_metrics = metrics
+                    best_train_threshold = threshold
+                    best_train_thresholded_answer = thresholded_answer
+                elif(metrics["f1"] >= best_train_metrics["f1"]):
+                    best_train_metrics = metrics
+                    best_train_threshold = threshold
+                    best_train_thresholded_answer = thresholded_answer
+
             avg_loss = total_loss_since_last_time/options.log_every
             total_loss_since_last_time = 0
             
-            print(routine_log_template.format(time.time()-start, epoch+1, options.epochs, iterations,avg_loss, loss.item(), train_exact_match, train_f1))
-            print("Number of 1s in GT:{}, Number of 1s in prediction:{}".format(gt_labels.sum(), thresholded_answer.detach().cpu().numpy().sum()))
+            print(routine_log_template.format(time.time()-start, epoch+1, options.epochs, iterations,avg_loss, loss.item(), best_train_metrics["em"], best_train_metrics["f1"], best_train_metrics["precision"], best_train_metrics["recall"], best_train_threshold))
+            print("Number of 1s in GT:{}, Number of 1s in prediction:{}".format(gt_labels.sum(), best_train_thresholded_answer.numpy().sum()))
         
             if iterations % options.save_every == 0:
                 snapshot_prefix = os.path.join(options.save_path, options.checkpoint_name)
@@ -336,17 +365,26 @@ for epoch in range(start_epoch, options.epochs):
 
     answers_for_whole_dev_set = np.concatenate(answers_for_whole_dev_set, axis = 0)
     gt_for_whole_dev_set = np.concatenate(gt_for_whole_dev_set, axis = 0)
-
-    dev_answer_labels = (torch.sigmoid(torch.tensor(answers_for_whole_dev_set)) > options.decision_threshold).numpy()
     
-    dev_metrics = evaluate(gt_for_whole_dev_set, dev_answer_labels)
+    best_dev_metrics = None
+    best_dev_threshold = 0.5
+    best_dev_answer_labels = None
+    for threshold in np.linspace(0.1,0.9,9):
+        dev_answer_labels = (torch.sigmoid(torch.tensor(answers_for_whole_dev_set)) > threshold).numpy()
+        dev_metrics = evaluate(gt_for_whole_dev_set, dev_answer_labels)
+        if(best_dev_metrics == None):
+            best_dev_metrics = dev_metrics
+            best_dev_threshold = threshold
+            best_dev_answer_labels = dev_answer_labels
+        elif(dev_metrics["f1"] >= best_dev_metrics["f1"]):
+            best_dev_metrics = dev_metrics
+            best_dev_threshold = threshold
+            best_dev_answer_labels = dev_answer_labels
 
-    dev_exact_match = dev_metrics["em"]
-    
-    dev_f1 = dev_metrics["f1"]
+    dev_f1 = best_dev_metrics["f1"]
 
-    print(dev_log_template.format(dev_exact_match,dev_f1))
-    print("Number of 1s in GT:{}, Number of 1s in prediction:{}".format(gt_for_whole_dev_set.sum(), dev_answer_labels.sum()))
+    print(dev_log_template.format(best_dev_metrics["em"],dev_f1,best_dev_metrics["precision"],best_dev_metrics["recall"], best_dev_threshold))
+    print("Number of 1s in GT:{}, Number of 1s in prediction:{}".format(gt_for_whole_dev_set.sum(), best_dev_answer_labels.sum()))
 
 
     # update best valiation set accuracy
@@ -384,6 +422,7 @@ for epoch in range(start_epoch, options.epochs):
     if(num_evaluations_since_last_best_dev_acc > options.early_stopping_patience):
         print("Training stopped because dev acc hasn't increased in {} epochs.".format(options.early_stopping_patience))
         print("Best dev set accuracy = {}".format(best_dev_f1))
+        break
 
     if(options.debugging_short_run):
         print("Short run completed")
