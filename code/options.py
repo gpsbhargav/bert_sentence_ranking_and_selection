@@ -171,7 +171,7 @@ class HTNHotpot:
     def __init__(self):
         
         # ----Training----
-        self.epochs = 50
+        self.epochs = 4
         self.batch_size = 16
         self.dev_batch_size = 32
         self.log_every = 10
@@ -203,7 +203,7 @@ class HTNHotpot:
         else:
             self.train_pkl_name = "preprocessed_train.pkl"
             self.dev_pkl_name = "preprocessed_dev.pkl"
-        self.save_path = "../saved_models/htn_b_t_d2_4epochs/"
+        self.save_path = "../saved_models/htn_ebd2_4epochs/"
         self.predictions_pkl_name = "predictions.pkl"
         self.checkpoint_name = "snapshot.pt"
         self.bert_archive = "../../bert_archive/"
@@ -221,7 +221,8 @@ class HTNHotpot:
         self.train_encoder = True
 
         self.dropout = 0.1  # doesn't apply to BERT
-        self.learning_rate = 3e-5
+        self.encoder_learning_rate = 3e-5
+        self.decoder_learning_rate = 3e-5
         self.warmup_proportion = 0.1
         self.loss_weight = 1.0  # make sure this is float.
 

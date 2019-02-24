@@ -151,26 +151,38 @@ criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([options.loss_weight],d
 
 
 # Prepare optimizer
-param_optimizer = list(encoder.named_parameters()) + list(decoder.named_parameters())
+encoder_param_optimizer = list(encoder.named_parameters())
+decoder_param_optimizer = list(decoder.named_parameters())
 
 # hack to remove pooler, which is not used
 # thus it produce None grad that break apex
 # param_optimizer = [n for n in param_optimizer if 'pooler' not in n[0]]
 
 no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
-optimizer_grouped_parameters = [
-    {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
-    {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+encoder_optimizer_grouped_parameters = [
+    {'params': [p for n, p in encoder_param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
+    {'params': [p for n, p in encoder_param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+    ]
+
+decoder_optimizer_grouped_parameters = [
+    {'params': [p for n, p in decoder_param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
+    {'params': [p for n, p in decoder_param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
     ]
 
 num_train_steps = int(
-            len(train_data) / options.gradient_accumulation_steps * options.epochs)
+            (len(train_dataset) / options.batch_size / options.gradient_accumulation_steps) * options.epochs)
 
 t_total = num_train_steps
-optimizer = BertAdam(optimizer_grouped_parameters,
-                             lr=options.learning_rate,
+encoder_optimizer = BertAdam(encoder_optimizer_grouped_parameters,
+                             lr=options.encoder_learning_rate,
                              warmup=options.warmup_proportion,
                              t_total=t_total)
+
+decoder_optimizer = BertAdam(decoder_optimizer_grouped_parameters,
+                             lr=options.decoder_learning_rate,
+                             warmup=options.warmup_proportion,
+                             t_total=t_total)
+
 
 routine_log_template = 'Time:{:.1f}, Epoch:{}/{}, Iteration:{}, Avg_train_loss:{:.4f}, batch_loss:{:.4f}, EM:{:.2f}, F1:{:.2f}, P:{:.2f}, R:{:.2f}, Threshold:{:.2f}'
 
@@ -197,7 +209,8 @@ if options.resume_training:
         iterations = checkpoint['iteration']
         encoder.load_state_dict(checkpoint['encoder_state_dict'])
         decoder.load_state_dict(checkpoint['decoder_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
+        encoder_optimizer.load_state_dict(checkpoint['encoder_optimizer'])
+        decoder_optimizer.load_state_dict(checkpoint['decoder_optimizer'])
         print("=> loaded checkpoint. Resuming epoch {}, iteration {}"
               .format(checkpoint['epoch']+1, checkpoint['iteration']))
 
@@ -239,7 +252,8 @@ for epoch in range(start_epoch, options.epochs):
 
         sentence_reps = torch.cat(sentence_reps_list, dim=1)
 
-        encoder.train(); decoder.train(); optimizer.zero_grad()
+        encoder.train(); decoder.train()
+        encoder_optimizer.zero_grad(); decoder_optimizer.zero_grad()
 
         answer = decoder(sentence_reps)
         
@@ -256,10 +270,15 @@ for epoch in range(start_epoch, options.epochs):
                 para_counter += 1
             
 
-        lr_this_step = options.learning_rate * warmup_linear(iterations/t_total, options.warmup_proportion)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr_this_step
-        optimizer.step()
+        # lr_this_step = options.encoder_learning_rate * warmup_linear(iterations/t_total, options.warmup_proportion)
+        encoder_lr_this_step = options.encoder_learning_rate * warmup_linear(iterations/t_total, options.warmup_proportion)
+        decoder_lr_this_step = options.decoder_learning_rate * warmup_linear(iterations/t_total, options.warmup_proportion)
+        for param_group in encoder_optimizer.param_groups:
+            param_group['lr'] = encoder_lr_this_step
+        for param_group in decoder_optimizer.param_groups:
+            param_group['lr'] = decoder_lr_this_step
+        encoder_optimizer.step()
+        decoder_optimizer.step()
         
         iterations += 1
         
@@ -303,6 +322,7 @@ for epoch in range(start_epoch, options.epochs):
             
             print(routine_log_template.format(time.time()-start, epoch+1, options.epochs, iterations,avg_loss, loss.item(), best_train_metrics["em"], best_train_metrics["f1"], best_train_metrics["precision"], best_train_metrics["recall"], best_train_threshold))
             print("Number of 1s in GT:{}, Number of 1s in prediction:{}".format(gt_labels.sum(), best_train_thresholded_answer.numpy().sum()))
+            print("Learning rate:{}".format(decoder_lr_this_step))
         
             if iterations % options.save_every == 0:
                 snapshot_prefix = os.path.join(options.save_path, options.checkpoint_name)
@@ -313,7 +333,8 @@ for epoch in range(start_epoch, options.epochs):
                             'encoder_state_dict': encoder.state_dict(),
                             'decoder_state_dict': decoder.state_dict(),
                             'best_acc': best_dev_f1,
-                            'optimizer' : optimizer.state_dict()
+                            'encoder_optimizer' : encoder_optimizer.state_dict(),
+                            'decoder_optimizer' : decoder_optimizer.state_dict()
                         }
                 torch.save(state, snapshot_path)
                 for f in glob.glob(snapshot_prefix + '*'):
@@ -407,7 +428,8 @@ for epoch in range(start_epoch, options.epochs):
                     'encoder_state_dict': encoder.state_dict(),
                     'decoder_state_dict': decoder.state_dict(),
                     'best_acc': best_dev_f1,
-                    'optimizer' : optimizer.state_dict()
+                    'encoder_optimizer' : encoder_optimizer.state_dict(),
+                    'decoder_optimizer' : decoder_optimizer.state_dict()
                 }
         torch.save(state, snapshot_path)
         for f in glob.glob(snapshot_prefix + '*'):
