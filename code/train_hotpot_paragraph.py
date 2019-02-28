@@ -231,6 +231,7 @@ for epoch in range(start_epoch, options.epochs):
             
             print(routine_log_template.format(time.time()-start, epoch+1, options.epochs, iterations,avg_loss, loss.item(), train_exact_match, train_f1))
             print("Number of 1s in GT:{}, Number of 1s in prediction:{}".format(gt_labels.cpu().numpy().sum(), thresholded_answer.detach().cpu().numpy().sum()))
+            print("Learning rate: ",lr_this_step)
         
         
             if iterations % options.save_every == 0:

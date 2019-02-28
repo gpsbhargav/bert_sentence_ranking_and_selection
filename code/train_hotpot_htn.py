@@ -214,6 +214,9 @@ if options.resume_training:
         print("=> loaded checkpoint. Resuming epoch {}, iteration {}"
               .format(checkpoint['epoch']+1, checkpoint['iteration']))
 
+if(options.dev_only):
+    best_dev_f1 = -1
+
 
 print("Training now")
 
@@ -226,6 +229,9 @@ for epoch in range(start_epoch, options.epochs):
     
     for batch_idx, batch_list in enumerate(train_data_loader):
         
+        if(options.dev_only):
+            break
+
         if(options.debugging_short_run):
             if(batch_idx == options.debugging_num_iterations+1):
                 break
@@ -269,10 +275,17 @@ for epoch in range(start_epoch, options.epochs):
                 s_reps.backward(gradient=sentence_reps_list[para_counter].grad)
                 para_counter += 1
             
-
-        # lr_this_step = options.encoder_learning_rate * warmup_linear(iterations/t_total, options.warmup_proportion)
         encoder_lr_this_step = options.encoder_learning_rate * warmup_linear(iterations/t_total, options.warmup_proportion)
         decoder_lr_this_step = options.decoder_learning_rate * warmup_linear(iterations/t_total, options.warmup_proportion)
+
+        if(max(encoder_lr_this_step, decoder_lr_this_step) < 0):
+            stop_training_flag = True
+            print("Learning rate too low. Stopping training")
+            break
+
+        assert(encoder_lr_this_step >= 0)
+        assert(decoder_lr_this_step >= 0)
+
         for param_group in encoder_optimizer.param_groups:
             param_group['lr'] = encoder_lr_this_step
         for param_group in decoder_optimizer.param_groups:

@@ -83,7 +83,7 @@ class ParagraphHotpotOptions:
         
         # ----Training----
         self.epochs = 5
-        self.batch_size = 16
+        self.batch_size = 8
         self.dev_batch_size = 32
         self.log_every = 100
         self.save_every = self.log_every * 5
@@ -103,13 +103,13 @@ class ParagraphHotpotOptions:
         self.data_pkl_path = "../data/hotpot_doc_level/"
         self.train_pkl_name = "preprocessed_train.pkl"
         self.dev_pkl_name = "preprocessed_dev.pkl"
-        self.save_path = "../saved_models/hotpot_doc_level/"
+        self.save_path = "../saved_models/hotpot_paragraph_bert_large/"
         self.predictions_pkl_name = "predictions.pkl"
-        self.bert_archive = "../../bert_archive/"
+        self.bert_archive = "../../bert_archive_2/"
         self.checkpoint_name = "snapshot.pt"
         
         # ----Network hyperparameters----
-        self.bert_type = 'bert-base-uncased' # one of bert-base-uncased or bert-large-uncased
+        self.bert_type = 'bert-large-uncased' # one of bert-base-uncased or bert-large-uncased
         if(self.bert_type == 'bert-base-uncased'):
             self.bert_hidden_size = 768
         else:
@@ -194,10 +194,13 @@ class HTNHotpot:
 
         # ----Train on small dataset ?----
         self.use_small_dataset = False
+        
+        # ---- Evaluation only ----
+        self.dev_only = False
 
         # ----Data location, other paths----
         self.data_pkl_path = "../data/hotpot_context/"
-        if(self.debugging_short_run or self.use_small_dataset):
+        if(self.use_small_dataset):
             self.train_pkl_name = "preprocessed_train_small.pkl"
             self.dev_pkl_name = "preprocessed_dev_small.pkl"
         else:
@@ -216,13 +219,13 @@ class HTNHotpot:
             self.bert_hidden_size = 1024
         
         self.num_encoder_layers = 3
-        self.num_decoder_layers = 6
+        self.num_decoder_layers = 2
         
         self.train_encoder = True
 
         self.dropout = 0.1  # doesn't apply to BERT
         self.encoder_learning_rate = 3e-5
-        self.decoder_learning_rate = 3e-5
+        self.decoder_learning_rate = 1e-4
         self.warmup_proportion = 0.1
         self.loss_weight = 1.0  # make sure this is float.
 
