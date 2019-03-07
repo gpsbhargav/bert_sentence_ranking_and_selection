@@ -83,7 +83,7 @@ class ParagraphHotpotOptions:
         
         # ----Training----
         self.epochs = 5
-        self.batch_size = 8
+        self.batch_size = 16
         self.dev_batch_size = 32
         self.log_every = 100
         self.save_every = self.log_every * 5
@@ -91,25 +91,26 @@ class ParagraphHotpotOptions:
         self.gradient_accumulation_steps = 1  # only 1 is supported
         self.gpu = 0 # this will be the primary GPU if there are > 1 GPU
         self.use_multiple_gpu = True
-        self.resume_training = False
-        # ----Vocab and embedding----
+        self.resume_training = True
         
+        # ----Evaluation only?----
+        self.dev_only = True
         
         # ----Data sizes, sequence lengths----
         self.max_seq_len = 500
-        self.max_sentences = 5
+        self.max_sentences = 10 # TODO make this 5
         
         # ----Data location, other paths----
         self.data_pkl_path = "../data/hotpot_doc_level/"
         self.train_pkl_name = "preprocessed_train.pkl"
-        self.dev_pkl_name = "preprocessed_dev.pkl"
-        self.save_path = "../saved_models/hotpot_paragraph_bert_large/"
+        self.dev_pkl_name = "preprocessed_dev_full_length.pkl" # TODO change this back
+        self.save_path = "../saved_models/hotpot_doc_level/"
         self.predictions_pkl_name = "predictions.pkl"
-        self.bert_archive = "../../bert_archive_2/"
+        self.bert_archive = "../../bert_archive/"
         self.checkpoint_name = "snapshot.pt"
         
         # ----Network hyperparameters----
-        self.bert_type = 'bert-large-uncased' # one of bert-base-uncased or bert-large-uncased
+        self.bert_type = 'bert-base-uncased' # one of bert-base-uncased or bert-large-uncased
         if(self.bert_type == 'bert-base-uncased'):
             self.bert_hidden_size = 768
         else:
@@ -180,11 +181,11 @@ class HTNHotpot:
         self.gradient_accumulation_steps = 1  # only 1 is supported
         self.gpu = 0 # this will be the primary GPU if there are > 1 GPU
         self.use_multiple_gpu = False # not supported
-        self.resume_training = False
+        self.resume_training = True
                 
         # ----Data sizes, sequence lengths----
         self.max_seq_len = 500
-        self.max_sentences = 5
+        self.max_sentences = 10  # TODO make this 5 for training
         self.num_paragraphs = 10
 
         # ----Debugging short run----
@@ -196,7 +197,7 @@ class HTNHotpot:
         self.use_small_dataset = False
         
         # ---- Evaluation only ----
-        self.dev_only = False
+        self.dev_only = True   # TODO make this false
 
         # ----Data location, other paths----
         self.data_pkl_path = "../data/hotpot_context/"
@@ -205,8 +206,8 @@ class HTNHotpot:
             self.dev_pkl_name = "preprocessed_dev_small.pkl"
         else:
             self.train_pkl_name = "preprocessed_train.pkl"
-            self.dev_pkl_name = "preprocessed_dev.pkl"
-        self.save_path = "../saved_models/htn_ebd2_4epochs/"
+            self.dev_pkl_name = "preprocessed_dev_full_length.pkl"  # TODO change this back
+        self.save_path = "../saved_models/htn_ebd6_4e_pname/"
         self.predictions_pkl_name = "predictions.pkl"
         self.checkpoint_name = "snapshot.pt"
         self.bert_archive = "../../bert_archive/"
@@ -219,7 +220,7 @@ class HTNHotpot:
             self.bert_hidden_size = 1024
         
         self.num_encoder_layers = 3
-        self.num_decoder_layers = 2
+        self.num_decoder_layers = 6
         
         self.train_encoder = True
 

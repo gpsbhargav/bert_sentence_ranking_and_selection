@@ -180,11 +180,17 @@ if options.resume_training:
               .format(checkpoint['epoch']+1, checkpoint['iteration']))
         
 
+if(options.dev_only):
+   best_dev_f1 = -1 
+
 start = time.time()
 
 for epoch in range(start_epoch, options.epochs):
     
     for batch_idx, batch in enumerate(train_data_loader):
+
+        if(options.dev_only):
+            break
         
         batch = [t.to(device) for t in batch]
 

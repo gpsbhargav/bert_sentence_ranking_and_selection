@@ -232,6 +232,10 @@ for epoch in range(start_epoch, options.epochs):
         if(options.dev_only):
             break
 
+        if(iterations > num_train_steps):
+            print("Reached maximum number of iterations")
+            break
+
         if(options.debugging_short_run):
             if(batch_idx == options.debugging_num_iterations+1):
                 break
@@ -278,9 +282,8 @@ for epoch in range(start_epoch, options.epochs):
         encoder_lr_this_step = options.encoder_learning_rate * warmup_linear(iterations/t_total, options.warmup_proportion)
         decoder_lr_this_step = options.decoder_learning_rate * warmup_linear(iterations/t_total, options.warmup_proportion)
 
-        if(max(encoder_lr_this_step, decoder_lr_this_step) < 0):
-            stop_training_flag = True
-            print("Learning rate too low. Stopping training")
+        if(min(encoder_lr_this_step, decoder_lr_this_step) < 0):
+            print("Learning rate < 0. Stopping training")
             break
 
         assert(encoder_lr_this_step >= 0)
